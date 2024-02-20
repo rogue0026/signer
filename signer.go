@@ -1,19 +1,20 @@
 package main
 
 import (
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 func ExecutePipeline(jobs ...job) {
-	in := make(chan interface{})
-	out := make(chan interface{})
-	for _, f := range jobs {
-		go f(in, out)
+	in := make(chan interface{}, 1)
+	out := make(chan interface{}, 1)
+	for _, j := range jobs {
+		go job(j)(in, out)
 		in = out
-		out = make(chan interface{})
+		out = make(chan interface{}, 1)
 	}
-
 }
 
 // crc32(data)+"~"+crc32(md5(data))
@@ -49,6 +50,7 @@ func MultiHash(in chan interface{}, out chan interface{}) {
 		if hashVal, ok := rawData.(string); ok {
 			chans := make([]chan string, 6)
 			for i := 0; i < len(chans); i++ {
+				chans[i] = make(chan string)
 				go func(th int) {
 					chans[th] <- DataSignerCrc32(strconv.Itoa(th) + hashVal)
 				}(i)
@@ -63,4 +65,29 @@ func MultiHash(in chan interface{}, out chan interface{}) {
 	close(out)
 }
 
-func CombineResults(in chan interface{}, out chan interface{}) {}
+func CombineResults(in chan interface{}, out chan interface{}) {
+	wg := &sync.WaitGroup{}
+	results := make([]string, 0, 100)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for rawVal := range in {
+			if hash, ok := rawVal.(string); ok {
+				results = append(results, hash)
+			}
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		sortResults(results)
+		out <- strings.Join(results, "_")
+		close(out)
+	}()
+
+}
+
+func sortResults(results []string) {
+	sort.Slice(results, func(i, j int) bool { return results[i] < results[j] })
+}
