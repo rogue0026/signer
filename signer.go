@@ -2,6 +2,7 @@ package main
 
 import (
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -39,5 +40,34 @@ var SingleHash = func(in, out chan interface{}) {
 	close(out)
 	// дождаться пока все отправят данные
 }
-var MultiHash = func(in, out chan interface{}) {}
+
+var MultiHash = func(in, out chan interface{}) {
+	wg := sync.WaitGroup{}
+	for val := range in {
+		results := make([]chan string, 6)
+		for i := 0; i < len(results); i++ {
+			results[i] = make(chan string, 1)
+		}
+		if singHashVal, ok := val.(string); ok {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < 6; i++ {
+					go func(th int) {
+						results[th] <- DataSignerCrc32(strconv.Itoa(th) + singHashVal)
+					}(i)
+				}
+				multiHashParts := make([]string, 6)
+				for i := 0; i < len(results); i++ {
+					multiHashParts[i] = <-results[i]
+				}
+				out <- strings.Join(multiHashParts, "")
+			}()
+		}
+	}
+	// wait here while all goroutines send data
+	wg.Wait()
+	close(out)
+}
+
 var CombineResults = func(in, out chan interface{}) {}
